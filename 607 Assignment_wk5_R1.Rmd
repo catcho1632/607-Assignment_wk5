@@ -1,0 +1,101 @@
+# 607 Assignment_wk5
+## by Catherine Cho
+
+```{r}
+library(readr)
+urlfile<-"https://raw.githubusercontent.com/catcho1632/607-Assignment_wk5/main/israeli_vaccination_data_analysis_start.csv"
+vax_raw<-read_csv(url(urlfile))
+```
+
+### Calculating the total population. 
+
+- Being fully vaccinated, means that an individual has received all 3 doses. The first and second and a booster. Not vaccinated means the individual has not recieved any doses. The data does not consider the "vaccinated" meaning those that are partially vaccinated. (2 or less doses). This is why the sum of all the age groups does not amount to 100%. So the total population calculated in this section accounts for this discrepancy and calculates the actual total population, which amounts to 7.16 Million. 
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(stringr)
+vax_trunc<-vax_raw[2:5,1:3]
+#Renaming column names
+colnames(vax_trunc)<-c('age_group','Not_Vax','Fully_Vax')
+
+#Adding a fourth column conditional to the type  of value in previous column
+vax_trunc$type<-ifelse(grepl("%",vax_trunc$Fully_Vax),'%_age_group','population_count')
+
+#Filling in missing values as a result of combined cells in the original excel file. 
+vax_trunc<-vax_trunc%>%fill(age_group)
+
+#splitting the dataframe for Not_Vax and Fully_Vax data
+Not_Vax<-subset(vax_trunc,select=c('age_group','type','Not_Vax'))
+Fully_Vax<-subset(vax_trunc,select=c('age_group','type','Fully_Vax'))
+
+#The obvservation, population_count and %_age_group, is scattered across multiple rows. To tidy this up, pivot_wider() is used. 
+Not_Vax<-Not_Vax %>%
+  pivot_wider(names_from=type,values_from=Not_Vax)
+Fully_Vax<-Fully_Vax %>%
+  pivot_wider(names_from=type,values_from=Fully_Vax)
+
+#Used the stringr package in order to extract the numerical values in table and to remove commas, percentage signs, etc. The values are converted from being a character to integer
+Not_Vax$population_count<-as.numeric(str_replace_all(Not_Vax$population_count,",",""))
+Not_Vax$`%_age_group`<-as.numeric(str_replace_all(Not_Vax$`%_age_group`,"%",""))
+Fully_Vax$population_count<-as.numeric(str_replace_all(Fully_Vax$population_count,",",""))
+Fully_Vax$`%_age_group`<-as.numeric(str_replace_all(Fully_Vax$`%_age_group`,"%",""))
+
+#combine tables
+Table<-bind_rows(Not_Vax,Fully_Vax)
+
+#calculating sum per age group
+less50_count<-sum(Table[Table$age_group=="<50",2])
+more50_count<-sum(Table[Table$age_group==">50",2])
+less50_percent<-sum(Table[Table$age_group=="<50",3])/100
+more50_percent<-sum(Table[Table$age_group==">50",3])/100
+
+#Total Population calculation, which includes partially vacinated people and children under 12 who are unelligable to recieve the vaccine. 
+Total_Population<-more50_count/more50_percent+less50_count/less50_percent
+
+Total_Population
+```
+
+### Calculating Efficacy v. Severe Disease
+
+- The efficacy of the vaccination against severe disease is high for both age groups. It is best to caclualte the efficacy per group since the risk  of severe disease is very different between age  groups. Taking the rate of severe  disease into consideration, the efficacy shows that it is doing a good job preventing hospitalization. Something to consider would be that there is no vaccination for children younger than 12 years old. So this may have an impact on the efficacy of the age group less than 50 years old. It could be possible that children, if vaccinated could have a better or worse immune response that is not being accounted for in this study. 
+```{r}
+severe_cases<-vax_raw[1:5,1:5]
+#Drop columns containing data about vaccinated population.
+severe_cases<-select(severe_cases,-2:-3)
+#Removing every row with NA under the "severe cases" variable. 
+severe_cases<-severe_cases%>%drop_na(Age,any_of("Severe Cases"))
+#Renaming Column names and converting characters to numeric values.
+colnames(severe_cases)<-c('age_group','Not_Vax_per100K','Fully_Vax_per100K')
+severe_cases$Not_Vax_per100K<-as.numeric(severe_cases$Not_Vax_per100K)
+severe_cases$Fully_Vax_per100K<-as.numeric(severe_cases$Fully_Vax_per100K)
+#creating a new dataframe, "efficacy" to join data from Total_Population per age_group.
+Not_Vax_count<-select(Not_Vax,-3)
+colnames(Not_Vax_count)[2]<-c('Not_Vax_count')
+Fully_Vax_count<-select(Fully_Vax,-3)
+colnames(Fully_Vax_count)[2]<-c('Fully_Vax_count')
+efficacy<-left_join(severe_cases,Not_Vax_count,by="age_group")
+efficacy<-left_join(efficacy,Fully_Vax_count,by="age_group")
+efficacy$Efficacy_v_SevereDisease<-1-((efficacy$Fully_Vax_per100K*100000/efficacy$Fully_Vax_count)/(efficacy$Not_Vax_per100K*100000/efficacy$Not_Vax_count))
+efficacy<-efficacy %>% mutate_at(vars(Efficacy_v_SevereDisease),funs(round(.,3)))     
+
+efficacy
+```
+
+### Comparing the rate of severe cases in unvaccinated individuals to that in vaccinated individuals. 
+
+- The rate of severe cases in unvaccinated individuals is assessed per age group. For the age group less than 50 years old, the unvaccinated people are 13 times more likely to get a severe case than the vaccinated people. For the age group of older than 50 years old, severe cases are approximaetely 7 times more likely in the unvaccinated person to the vaccinated person. 
+
+```{r}
+#Severe case rate per vaccination status group
+efficacy$Rate_Fully_Vax<-efficacy$Fully_Vax_per100K*100000/efficacy$Fully_Vax_count
+efficacy$Rate_Not_Vax<-efficacy$Not_Vax_per100K*100000/efficacy$Not_Vax_count
+
+efficacy<-efficacy %>% mutate_at(vars(Rate_Fully_Vax),funs(round(.,1)))     
+efficacy<-efficacy %>% mutate_at(vars(Rate_Not_Vax),funs(round(.,1)))     
+
+efficacy$compare<-efficacy$Rate_Not_Vax/efficacy$Rate_Fully_Vax
+efficacy$compare
+efficacy
+
+```
